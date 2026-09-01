@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<title>택배 접수 신청서</title>
+<style>
+  @page { size: A4; margin: 6mm; }
+  * { box-sizing: border-box; }
+  html, body { background: #fff; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+         "Malgun Gothic", sans-serif; margin: 0; color: #000; background: #fff; }
+
+  /* A4 한 장에 8명분 — 남는 자리 없이 한 장을 꽉 채운다 */
+  .sheet { display: flex; flex-direction: column; gap: 2mm; }
+
+  .box { border: 1.2px solid #000; border-radius: 1.5mm; padding: 2.4mm 3.2mm;
+         background: #fff; }
+
+  /* 한 줄에 여러 항목을 나란히 놓아 높이를 줄인다 */
+  .row { display: flex; align-items: flex-end; gap: 2.5mm; margin-bottom: 2.2mm; }
+  .row:last-child { margin-bottom: 0; }
+
+  .f { display: flex; align-items: flex-end; gap: 1.5mm; }
+  .lb { font-size: 8.5pt; font-weight: 700; white-space: nowrap; padding-bottom: .6mm; }
+  .ln { border-bottom: 1px solid #000; height: 7.6mm; }
+
+  .tel .pre { font-size: 8.5pt; font-weight: 600; padding-bottom: .6mm; }
+  .tel .seg { width: 14mm; border-bottom: 1px solid #000; height: 7.6mm; }
+  .tel .dash { padding-bottom: .6mm; font-size: 8.5pt; }
+
+  .cnt { width: 10mm; height: 7.5mm; border: 1px solid #000; border-radius: .7mm;
+         display: inline-block; flex: none; }
+  .ct { font-size: 8pt; white-space: nowrap; margin-right: 1mm; }
+
+  @media print { .noprint { display: none; } }
+  .noprint { padding: 8px 12px; background: #fff; font-size: 12px; color: #555;
+             border-bottom: 1px solid #ddd; }
+</style></head>
+<body>
+<div class="noprint">
+  브라우저에서 <b>파일 → 프린트</b> (⌘P) 로 인쇄하세요. A4 한 장에 8명분입니다.
+</div>
+
+<div class="sheet" id="sheet"></div>
+
+<script>
+// 같은 칸이 여덟 번 반복되므로 코드로 찍어낸다. 손으로 복사해 두면
+// 한 군데를 고칠 때 나머지를 빠뜨리기 쉽다.
+const BOX = `
+  <div class="box">
+    <div class="row">
+      <span class="f" style="flex:1"><span class="lb">보내는 분</span>
+        <span class="ln" style="flex:1"></span></span>
+      <span class="f tel"><span class="pre">010</span><span class="dash">-</span>
+        <span class="seg"></span><span class="dash">-</span><span class="seg"></span></span>
+      <span class="f" style="flex:1"><span class="lb">받는 분</span>
+        <span class="ln" style="flex:1"></span></span>
+      <span class="f tel"><span class="pre">010</span><span class="dash">-</span>
+        <span class="seg"></span><span class="dash">-</span><span class="seg"></span></span>
+    </div>
+
+    <div class="row">
+      <span class="f" style="flex:1"><span class="lb">받는분 주소</span>
+        <span class="ln" style="flex:1"></span></span>
+    </div>
+
+    <div class="row">
+      <span class="f"><span class="lb">포도 종류</span>
+        <span class="cnt"></span><span class="ct">청향 5kg</span>
+        <span class="cnt"></span><span class="ct">켐벨 5kg</span>
+        <span class="cnt"></span><span class="ct">켐벨 10kg</span></span>
+      <span class="f" style="flex:1"><span class="lb">요청사항</span>
+        <span class="ln" style="flex:1"></span></span>
+    </div>
+  </div>`;
+document.getElementById('sheet').innerHTML = BOX.repeat(8);
+</script>
+</body></html>

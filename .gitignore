@@ -1,0 +1,6 @@
+# 손님 개인정보가 들어 있어 올리지 않는다
+storage/
+
+__pycache__/
+*.pyc
+.venv/
