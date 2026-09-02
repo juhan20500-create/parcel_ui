@@ -86,10 +86,10 @@ def export_xls(rows, sender=""):
     for i, row in enumerate(rows, start=1):
         for c, key in enumerate(COLUMNS):
             val = row.get(key, "")
-            # 손님이 보낸 건은 받는 분 이름 뒤에 '누구보냄'을 붙인다.
-            # 시골농원(보내는 분을 따로 안 적은 경우)은 붙이지 않는다.
+            # 접수는 늘 시골농원 이름으로 한다. 실제로 보내는 손님은
+            # 받는 분 이름 뒤에 '누구보냄'으로 적어 구분한다.
             if key == "받는분":
-                who = row.get("보내는분", "")
+                who = row.get("보낸이", "")
                 if who and who != "시골농원":
                     val = f"{val} {who}보냄"
             # 늘 같은 값이라 화면에서 묻지 않고 여기서 채운다
@@ -182,11 +182,6 @@ def book_route():
 @app.route("/export", methods=["POST"])
 def export_route():
     rows = load()
-    body = request.get_json(silent=True) or {}
-    # 보내는 분 이름이 오면 그 사람 것만 뽑는다. 없으면 전체.
-    only = body.get("보내는분")
-    if only is not None:
-        rows = [r for r in rows if r.get("보내는분", "") == only]
     if not rows:
         return jsonify({"error": "넣은 것이 없습니다"}), 400
     missing = []
@@ -196,14 +191,8 @@ def export_route():
                 missing.append(f"{i}번째 줄: {key}")
     if missing:
         return jsonify({"error": "빠진 칸이 있습니다", "missing": missing[:10]}), 400
-    # 우체국은 보내는 분 1명당 접수 1건이다. 그래서 보내는 분별로 파일을 나눈다.
-    groups = {}
-    for r in rows:
-        groups.setdefault(r.get("보내는분", ""), []).append(r)
-    made = []
-    for sender, part in groups.items():
-        made.append(os.path.basename(export_xls(part, sender)))
-    return jsonify({"ok": True, "names": made})
+    # 손님이 여럿이어도 접수는 시골농원 이름으로 한 번에 한다. 그래서 파일도 하나다.
+    return jsonify({"ok": True, "names": [os.path.basename(export_xls(rows, "시골농원"))]})
 
 
 def load_history():
@@ -350,7 +339,7 @@ HTML = r"""
 
  <div class="card">
   <div class="grid" style="grid-template-columns:1.2fr 1fr 2fr;margin-bottom:12px">
-   <div><label>보내는 분 *</label>
+   <div><label>보내는 손님 <span style="color:var(--muted)">(안 적으면 시골농원)</span></label>
      <input id="s_name" list="senders" placeholder="이름 (전에 온 분이면 골라짐)"></div>
    <div><label>보내는 분 전화 <span style="color:var(--muted)">(농장 번호로 고정)</span></label>
      <input id="s_tel" value="010-3335-0397" readonly style="background:#20242c"></div>
@@ -395,6 +384,7 @@ HTML = r"""
  </tr></thead><tbody></tbody></table>
 
  <div class="row">
+  <button id="exp">xls 내보내기 (시골농원 이름으로 한 파일)</button>
   <button class="ghost" id="archive">접수 끝냄 (기록으로 보내기)</button>
   <button class="ghost" id="clearAll">목록 전체 비우기</button>
   <span id="count" style="color:var(--muted);font-size:12.5px"></span>
@@ -470,7 +460,7 @@ function esc(s){ return String(s??'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&
 function groupRows(){
   const out = [];
   rows.forEach((r,i)=>{
-    const name = r.보내는분 || '';
+    const name = r.보낸이 || '시골농원';
     let g = out.find(x => x.name === name);
     if(!g){ g = {name, items:[]}; out.push(g); }
     g.items.push(i);
@@ -481,9 +471,8 @@ function groupRows(){
 function render(){
   const tb = $('tbl').querySelector('tbody');
   tb.innerHTML = groupRows().map(g =>
-    `<tr class="grp"><td colspan="9">${esc(g.name || '(보내는 분 없음)')}
-       <span style="color:var(--muted)">· ${g.items.length}건</span>
-       <button class="mini" data-sender="${esc(g.name)}">xls 내보내기</button></td></tr>`
+    `<tr class="grp"><td colspan="9">${esc(g.name)}
+       <span style="color:var(--muted)">· ${g.items.length}건</span></td></tr>`
     + g.items.map(i => { const r = rows[i]; return `<tr>
     <td class="num">${i+1}</td>
     <td>${esc(r.받는분)}</td>
@@ -499,7 +488,6 @@ function render(){
     rows.splice(+el.dataset.i,1); persist();
   });
   tb.querySelectorAll('.edit').forEach(el=>el.onclick=()=>startEdit(+el.dataset.i));
-  tb.querySelectorAll('.mini').forEach(el=>el.onclick=()=>exportXls(el.dataset.sender));
   $('count').textContent = rows.length ? `${rows.length}건` : '';
 }
 
@@ -524,7 +512,7 @@ const BOXBACK = { '3kg':[1,0], '3kg 2개':[2,0], '5kg':[0,1], '5kg 2개':[0,2],
 function sameRows(r){
   return rows.map((x,i)=>i).filter(i => {
     const x = rows[i];
-    return x.보내는분 === r.보내는분 && x.받는분 === r.받는분
+    return (x.보낸이||'') === (r.보낸이||'') && x.받는분 === r.받는분
         && x.주소 === r.주소 && (x.상세주소||'') === (r.상세주소||'');
   });
 }
@@ -532,7 +520,7 @@ function sameRows(r){
 function startEdit(i){
   const r = rows[i];
   editing = i;
-  $('s_name').value = r.보내는분 || '';
+  $('s_name').value = r.보낸이 || '';
   for(const [k,id] of Object.entries(FIELDS)) $(id).value = r[k] || '';
   // 상자 개수도 되돌려 채운다. 숫자를 바꾸면 그 사람 줄이 다시 짜인다.
   let c3 = 0, c5 = 0;
@@ -564,9 +552,10 @@ $('add').onclick = ()=>{
   for(const k of ['받는분','우편번호','주소']){
     if(!r[k]){ show('err', k + ' 칸을 채워주세요'); return; }
   }
+  // 접수는 늘 시골농원 이름으로 한다. 손님 이름은 받는 분 옆에 적어 구분한다.
   const sender = $('s_name').value.trim();
-  if(!sender){ show('err', '보내는 분을 넣어주세요'); return; }
-  r.보내는분 = sender;
+  r.보낸이 = (sender && sender !== '시골농원') ? sender : '';
+  r.보내는분 = '시골농원';
   const n = id => Math.max(0, parseInt($(id).value || '0', 10) || 0);
   if(editing !== null){
     const old = rows[editing];
@@ -622,13 +611,10 @@ function show(kind, text){ const m=$('msg'); m.className='msg '+kind; m.textCont
 function hide(){ $('msg').className='msg'; }
 
 // sender를 주면 그 사람 것만, 안 주면 전체를 뽑는다.
-async function exportXls(sender, 합치기){
+async function exportXls(){
   hide();
-  const body = 합치기 ? {합치기: true}
-             : (sender === undefined ? {} : {보내는분: sender});
   const res = await fetch('/export', {method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify(body)});
+    headers:{'Content-Type':'application/json'}, body: '{}'});
   const d = await res.json();
   if(!res.ok){
     show('err', d.error + (d.missing ? '\n' + d.missing.join('\n') : ''));
@@ -642,6 +628,7 @@ async function exportXls(sender, 합치기){
 $('doneClose').onclick = ()=>{ $('donePanel').style.display='none'; };
 $('donePanel').onclick = e=>{ if(e.target.id==='donePanel') $('donePanel').style.display='none'; };
 $('doneOpen').onclick = ()=>{ fetch('/open_folder',{method:'POST'}); };
+$('exp').onclick = ()=> exportXls();
 
 
 $('addrClose').onclick = ()=>{ $('addrPanel').style.display='none'; };
