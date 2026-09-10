@@ -9,6 +9,7 @@
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import webbrowser
@@ -68,7 +69,20 @@ def clean_memo(text):
     return " ".join("".join(keep).split())
 
 
+# 화면 정렬과 같은 순서로 뽑는다. 창구에서 상자를 종류별로 쌓아 놓고 내기 편하다.
+BOX_ORDER = {"청향": 0, "캠벨": 1, "켐벨": 1}
+
+
+def box_key(row):
+    p = str(row.get("상품", ""))
+    variety = BOX_ORDER.get(p[:2], 9)
+    m = re.search(r"(\d+)\s*kg", p)
+    kg = int(m.group(1)) if m else 0
+    return (variety, kg, 2 if "2개" in p else 1, row.get("받는분", ""))
+
+
 def export_xls(rows, sender=""):
+    rows = sorted(rows, key=box_key)
     """우체국 양식 파일을 열어 예시 줄을 지우고 우리 줄을 넣는다."""
     import xlrd
     from xlutils.copy import copy as xl_copy
@@ -288,6 +302,8 @@ HTML = r"""
  .del:hover{ color:var(--accent); }
  .grp td{ background:#20242c; font-weight:600; }
  .mini{ float:right; padding:3px 10px; font-size:11.5px; font-weight:600; }
+ .sortbtn{ padding:6px 13px; font-size:12.5px; }
+ .sortbtn.on{ background:var(--accent); color:#fff; border-color:var(--accent); }
  .gotoPost{ background:var(--accent); color:#fff; text-decoration:none; font-size:14px;
    font-weight:700; padding:12px 22px; border-radius:9px; white-space:nowrap; }
  .gotoPost:hover{ filter:brightness(1.12); }
@@ -341,8 +357,8 @@ HTML = r"""
   <div class="grid" style="grid-template-columns:1.2fr 1fr 2fr;margin-bottom:12px">
    <div><label>보내는 손님 <span style="color:var(--muted)">(안 적으면 시골농원)</span></label>
      <input id="s_name" list="senders" placeholder="이름 (전에 온 분이면 골라짐)"></div>
-   <div><label>보내는 분 전화 <span style="color:var(--muted)">(농장 번호로 고정)</span></label>
-     <input id="s_tel" value="010-3335-0397" readonly style="background:#20242c"></div>
+   <div><label>보내는 분 전화 <span style="color:var(--muted)">(비워도 됨)</span></label>
+     <input id="s_tel" placeholder="010-1234-5678"></div>
   </div>
   <datalist id="senders"></datalist>
 
@@ -378,9 +394,15 @@ HTML = r"""
   </div>
  </div>
 
+ <div class="row" style="margin-top:18px">
+  <span style="color:var(--muted);font-size:12.5px">정렬</span>
+  <button class="ghost sortbtn" id="sortBox">상자별</button>
+  <button class="ghost sortbtn" id="sortEntry">접수 순서</button>
+ </div>
+
  <table id="tbl"><thead><tr>
-   <th>#</th><th>받는 분</th><th>우편번호</th><th>주소</th><th>연락처</th>
-   <th>중량</th><th>요청사항</th><th></th><th></th>
+   <th>#</th><th>받는 분</th><th>상자</th><th>접수 중량</th><th>우편번호</th><th>주소</th>
+   <th>연락처</th><th>요청사항</th><th></th><th></th>
  </tr></thead><tbody></tbody></table>
 
  <div class="row">
@@ -442,10 +464,10 @@ const KGLABEL = { '5':'3kg', '7':'5kg', '15':'10kg' };
 function packBoxes(c3, c5){
   const out = [];
   const put = (n, 중량, 상품) => { for(let i = 0; i < n; i++) out.push({중량, 상품}); };
-  put(Math.floor(c5 / 2), '15', '5kg 2개');
-  put(c5 % 2,             '7',  '5kg');
-  put(Math.floor(c3 / 2), '7',  '3kg 2개');
-  put(c3 % 2,             '5',  '3kg');
+  put(Math.floor(c5 / 2), '15', '캠벨 5kg 2개');
+  put(c5 % 2,             '7',  '캠벨 5kg');
+  put(Math.floor(c3 / 2), '7',  '청향 3kg 2개');
+  put(c3 % 2,             '5',  '청향 3kg');
   return out;
 }
 
@@ -454,7 +476,29 @@ const FIELDS = {
   일반전화:'f_tel', 휴대전화:'f_mobile', 요청사항:'f_memo',
 };
 
+// 주소에서 도로명+건물번호만 눈에 띄게. 시/도·구는 흐리게 둔다.
+function addrHtml(a){
+  const t = String(a || '').trim().split(/\s+/);
+  if(t.length < 2) return esc(a);
+  const head = t.slice(0, -2).join(' ');
+  const core = t.slice(-2).join(' ');
+  return (head ? esc(head) + ' ' : '')
+       + `<b style="color:var(--accent)">${esc(core)}</b>`;
+}
+
 function esc(s){ return String(s??'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// 표 정렬: 'box'는 품종·크기 순, 'entry'는 넣은 순서 그대로.
+let sortMode = 'box';
+
+// 표는 품종(청향 먼저), 그다음 상자 크기 순으로 세운다. 눈으로 세기 편하다.
+const VORDER = { '청향': 0, '캠벨': 1, '켐벨': 1 };
+function boxKey(r){
+  const p = r.상품 || '';
+  const v = (p.slice(0,2) in VORDER) ? VORDER[p.slice(0,2)] : 9;
+  const m = p.match(/(\d+)\s*kg/);
+  return [v, m ? +m[1] : 0, /2개/.test(p) ? 2 : 1];
+}
 
 // 우체국은 보내는 분 1명당 접수 1건이라 화면도 보내는 분별로 묶어 보여준다.
 function groupRows(){
@@ -465,24 +509,41 @@ function groupRows(){
     if(!g){ g = {name, items:[]}; out.push(g); }
     g.items.push(i);
   });
+  for(const g of out){
+    g.items.sort((a,b)=>{
+      const x = boxKey(rows[a]), y = boxKey(rows[b]);
+      return (x[0]-y[0]) || (x[1]-y[1]) || (x[2]-y[2])
+          || rows[a].받는분.localeCompare(rows[b].받는분, 'ko');
+    });
+  }
   return out;
 }
 
 function render(){
   const tb = $('tbl').querySelector('tbody');
-  tb.innerHTML = groupRows().map(g =>
-    `<tr class="grp"><td colspan="9">${esc(g.name)}
-       <span style="color:var(--muted)">· ${g.items.length}건</span></td></tr>`
-    + g.items.map(i => { const r = rows[i]; return `<tr>
-    <td class="num">${i+1}</td>
-    <td>${esc(r.받는분)}</td>
-    <td class="num">${esc(r.우편번호)}</td>
-    <td>${esc(r.주소)} ${esc(r.상세주소||'')}</td>
-    <td class="num">${esc(r.휴대전화||r.일반전화||'')}</td>
+  // 손님별로 나누지 않고 한 줄로 세운다. 손님이 있으면 받는 분 옆에 적는다.
+  const order = rows.map((r,i)=>i);
+  if(sortMode === 'box'){
+    order.sort((a,b)=>{
+      const x = boxKey(rows[a]), y = boxKey(rows[b]);
+      return (x[0]-y[0]) || (x[1]-y[1]) || (x[2]-y[2])
+          || rows[a].받는분.localeCompare(rows[b].받는분, 'ko');
+    });
+  }
+  $('sortBox').classList.toggle('on', sortMode === 'box');
+  $('sortEntry').classList.toggle('on', sortMode === 'entry');
+  // 번호는 송장 개수를 세려고 붙인다. 보이는 순서대로 1,2,3...
+  tb.innerHTML = order.map((i, n) => { const r = rows[i]; return `<tr>
+    <td class="num">${n+1}</td>
+    <td>${esc(r.받는분)}${r.보낸이 ? ` <span style="color:var(--muted)">${esc(r.보낸이)}보냄</span>` : ''}</td>
     <td class="num">${esc(r.상품 || KGLABEL[r.중량] || r.중량)}</td>
+    <td class="num">${esc(r.중량)}kg</td>
+    <td class="num">${esc(r.우편번호)}</td>
+    <td>${addrHtml(r.주소)} ${esc(r.상세주소||'')}</td>
+    <td class="num">${esc(r.휴대전화||r.일반전화||'')}</td>
     <td>${esc(r.요청사항||'')}</td>
     <td class="edit" data-i="${i}">수정</td>
-    <td class="del" data-i="${i}">✕</td></tr>`; }).join('')).join('');
+    <td class="del" data-i="${i}">✕</td></tr>`; }).join('');
   tb.querySelectorAll('.del').forEach(el=>el.onclick=()=>{
     if(editing === +el.dataset.i) stopEdit();
     rows.splice(+el.dataset.i,1); persist();
@@ -504,8 +565,13 @@ let editing = null;
 
 // 화면에 적어둔 상자 이름을 개수로 되돌린다. 고칠 때 칸을 채워 주기 위해서다.
 const BOXBACK = { '3kg':[1,0], '3kg 2개':[2,0], '5kg':[0,1], '5kg 2개':[0,2],
-                  '청향 5kg':[0,1], '켐벨 5kg':[0,1], '청향 6kg':[0,1],
-                  '청향 10kg':[0,2], '켐벨 10kg':[0,2] };
+                  '6kg':[0,1], '10kg':[0,2] };
+
+// '캠벨 5kg 2개'처럼 품종이 붙어 있어도 개수를 읽어낸다.
+function backCount(상품){
+  const p = String(상품 || '').replace(/^(청향|캠벨|켐벨)\s*/, '');
+  return BOXBACK[p] || [0, 0];
+}
 
 // 한 사람 앞으로 나간 줄은 여러 개일 수 있다(상자를 둘씩 묶어 나눠 놓아서).
 // 고칠 때는 그 사람 줄을 통째로 다룬다.
@@ -513,7 +579,8 @@ function sameRows(r){
   return rows.map((x,i)=>i).filter(i => {
     const x = rows[i];
     return (x.보낸이||'') === (r.보낸이||'') && x.받는분 === r.받는분
-        && x.주소 === r.주소 && (x.상세주소||'') === (r.상세주소||'');
+        && x.주소 === r.주소 && (x.상세주소||'') === (r.상세주소||'')
+        && (x.상품||'') === (r.상품||'');   // 상자가 다르면 따로 고친다
   });
 }
 
@@ -525,7 +592,7 @@ function startEdit(i){
   // 상자 개수도 되돌려 채운다. 숫자를 바꾸면 그 사람 줄이 다시 짜인다.
   let c3 = 0, c5 = 0;
   for(const j of sameRows(r)){
-    const back = BOXBACK[rows[j].상품] || [0,0];
+    const back = backCount(rows[j].상품);
     c3 += back[0]; c5 += back[1];
   }
   $('c_3').value = c3 || '';
@@ -629,6 +696,8 @@ $('doneClose').onclick = ()=>{ $('donePanel').style.display='none'; };
 $('donePanel').onclick = e=>{ if(e.target.id==='donePanel') $('donePanel').style.display='none'; };
 $('doneOpen').onclick = ()=>{ fetch('/open_folder',{method:'POST'}); };
 $('exp').onclick = ()=> exportXls();
+$('sortBox').onclick = ()=>{ sortMode = 'box'; render(); };
+$('sortEntry').onclick = ()=>{ sortMode = 'entry'; render(); };
 
 
 $('addrClose').onclick = ()=>{ $('addrPanel').style.display='none'; };
@@ -648,13 +717,8 @@ function refreshSenders(){
     .map(x=>`<option value="${esc(x.이름)}">`).join('');
 }
 
-// 보내는 분 전화는 늘 농장 번호로 나간다. 손님 이름만 바뀐다.
-const SENDER_TEL = '010-3335-0397';
-
-// 보내는 분이 누구든 전화는 농장 번호로 고정한다
-function onSenderChange(){
-  $('s_tel').value = SENDER_TEL;
-}
+// 보내는 분 전화는 접수에 안 쓰인다(우체국 양식에 칸이 없다). 비워 둬도 된다.
+function onSenderChange(){}
 $('s_name').oninput = onSenderChange;
 $('s_name').onchange = onSenderChange;
 
